@@ -1,0 +1,256 @@
+const _ = require('lodash');
+ 
+      Cuarto         = 20,
+      Cuarto_tunel = 3,
+      murcielagos          = 2,
+      pozos          = 2,
+      flechas        = 5,
+ 
+      HELP =`
+Bienvenido a "La caza del Wumpus"
+El wumpus vive en una cueva de 20 cuartos. Cada habitación cuenta con 3 tuneles a
+otros cuartos. (Funciona de manera similar a un dodecaedro.)
+
+Peligros:
+ Pozos sin fondo - Dos Cuarto tienen pozos sin fondo en ellos. Si vas
+   allí, usted cae en el pozo (y pierde)!
+ Super-murcielagos - Otros dos Cuarto tienen súper murcielagos. Si vas allí, un
+   murcielago te atrapa y te lleva a otra habitación al azar (que
+   puede ser problemático).
+Wumpus:
+   El wumpus no está preocupado por los peligros. Por lo general, él está dormido. 
+   Dos cosas despertarlo: Al disparar una flecha, o al entrar en su habitación.
+   Si el wumpus despierta, se mueve una habitación o se queda quieto.
+   Después de eso, si él es donde estás, te come y se pierde!
+Usted:
+   Cada turno puedes mover o disparar una flecha torcida.
+   Mover: Puede mover una habitación (a través de un túnel).
+   flechas: Tienes 5 flechas. Se pierde cuando te quedas sin ella.
+      Sólo se puede disparar al cuarto cercano.
+      Si la flecha golpea el wumpus, usted gana.
+Advertencias:
+   Cuando estas en una habitación lejos de un wumpus o peligro, el ordenador
+   dice:
+   Wumpus: "Usted huele algo terrible cerca."
+   Murcielagos: "Se oye un crujido."
+   Pozos: "Se siente un viento frío que sopla desde una caverna cerca."
+`;
+ 
+ 
+// Importamos todas las librerias lodash pero "isNan" no, para no causar conflictos.
+_.each(_.keys(_), k => global[k === 'isNaN' ? '_isNaN' : k] = _[k]);
+ 
+//Implementamos el mundo de 20 cuartos interconectados con 3 tuneles.
+ 
+const cave = chain(range(Cuarto))
+              .map(n => [n, [], []])
+              .reduce((acc, n, idx, lst) => {
+                acc = acc || lst;
+ 
+                // possible candidates: not self; not already linked to the current room;
+                //   not already having three tunel
+                const candidates = reject(acc, nn => first(nn) === first(n)
+                        || contains(nn[1], first(n))
+                        || contains(n[1], first(nn))
+                        || nn[1].length === Cuarto_tunel),
+                      chosen = sample(candidates, Cuarto_tunel - n[1].length);
+ 
+                each(chosen, c => {
+                  n[1].push(first(c));
+                  c[1].push(first(n));
+                })
+ 
+                return acc;
+              }, null)//Fin Reduce.
+
+              .thru(c => {
+                const findEmptyAndAdd = (element) => sample(filter(c, r => isEmpty(r[2])))[2] = [element];
+ 
+                findEmptyAndAdd('Wumpus');
+                times(murcielagos, partial(findEmptyAndAdd, 'Super-murcielago'));
+                times(pozos, partial(findEmptyAndAdd, 'Pozo'));
+ 
+                return c;
+              })
+              .value();
+ 
+ var world = {
+  cave: cave,
+  player: {
+    room:  sample(filter(cave, r => isEmpty(r[2]))),
+    flechas: flechas
+  }
+};
+  
+//Funciones:
+ 
+function isNearby(world, element) {
+  return chain(world.player.room[1])
+          .map(r => find(world.cave, rr => first(rr) === r))
+          .any(r => contains(r[2], element))
+          .value();
+}
+ 
+function isInRoom (world, element, room) {
+  room = room || world.player.room;
+  return contains(room[2], element);
+}
+ 
+function roomIsNearby(world, roomId) {
+  return contains(world.player.room[1].concat(first(world.player.room)), roomId);
+}
+ 
+function roomById (world, roomId) {
+  return find(world.cave, r => first(r) === roomId);
+}
+ 
+function randomEmptyRoom(world) {
+  return sample(filter(world.cave, r => isEmpty(r[2])));
+}
+ 
+//Iteración con el mundo...
+ 
+function describeCurrentRoom(world) {
+  const pit    = isNearby(world, 'Pozo')    ? '\nSe siente un aire frio cerca de la caverna.' : '',
+        wumpus = isNearby(world, 'Wumpus') ? '\nSe siente un olor terrible.' : '',
+        bat    = isNearby(world, ' Super-murcielago')    ? '\nTu escuchas un rugido.' : '';
+ 
+  return `Tu estas en el cuarto ${ first(world.player.room) }
+Salidas posibles: ${ world.player.room[1].join(', ') }${ pit }${ wumpus }${ bat }`;
+}
+ 
+function processInput (world, input) {
+ 
+  function validateRoom() {
+    var roomId;
+ 
+    if (!_isNaN(roomId = parseInt(input, 10)) && roomId < Cuarto && roomIsNearby(world, roomId)) {
+      return roomById(world, roomId);
+    }
+  }
+ 
+  // quit
+  if (processInput.awaiting === 'quit') {
+    if (input !== 'y' && input !== 'n') {
+      console.log("Respuesta invalida");
+    } else {
+      if (input === 'y') {
+        console.log('El wumpus te espera para la próxima!');
+        process.exit(0);
+      } else {
+        console.log('Bien! Hay un wumpus que cazar!');
+      }
+    }
+ 
+    processInput.awaiting = null;
+    return world;
+  }
+ 
+  if (input === 'q') {
+    console.log("Realmente deseas abandonar?[y/n]");
+    processInput.awaiting = 'quit';
+    return world;
+  }
+ 
+  // move
+  if (processInput.awaiting === 'move') {
+    var room;
+ 
+    if (!(room = validateRoom())) {
+      console.log('No hay un tunel desde este cuarto');
+    } else {
+      world.player.room = room;
+      if (isInRoom(world, 'Wumpus')) {
+        console.log('EL WUMPUS TE HA COMIDO! GAME OVER');
+        process.exit(0);
+      }
+      if (isInRoom(world, 'Pozo')) {
+        console.log('TE HAS CAIDO EN EL POZO...TU HAS MUERTO!\nGAME OVER');
+        process.exit(0);
+      }
+      if (isInRoom(world, ' Super-murcielago')) {
+        world.player.room = randomEmptyRoom(world);
+        console.log('El murcielago te ha cambiado de zona...!');
+      }
+ 
+      console.log(describeCurrentRoom(world));
+    }
+    console.log('Que quieres hacer? moverte(m) o disparar(s) recuerda que tienes solo 5 flechas?');
+ 
+    processInput.awaiting = null;
+    return world;
+  }
+ 
+  if (input === 'm') {
+    processInput.awaiting = 'move';
+    console.log('A que tunel?');
+    return world;
+  }
+ 
+  // Proceso para disparar...
+  if (processInput.awaiting === 'shoot') {
+    var room;
+ 
+    if (!(room = validateRoom())) {
+      console.log('No existe algún tunel conectado a este cuarto');
+    } else {
+      if (isInRoom(world, 'Wumpus', room)) {
+        console.log("BIEN HECHO CAZADOR, TU HAS MATADO AL WUMPUS!!!");
+        process.exit(0);
+      } else {
+        if (random(3) > 0) {
+          var newWumpusRoom = randomEmptyRoom(world);
+ 
+          find(world.cave, partial(isInRoom, world, 'Wumpus'))[2] = [];
+          newWumpusRoom[2] = ['Wumpus'];
+ 
+          if (isEqual(world.player.room, newWumpusRoom)) {
+            console.log('El wumpus ha despertado y te ha comido...suerte para la próxima!\nGAME OVER');
+            process.exit(0);
+          } else {
+            console.log('Se logra escuchar un ruido en la caverna cercana...');
+          }
+        }
+      }
+    }
+ 
+    world.player.flechas--;
+    if (world.player.flechas === 0) {
+      console.log('Te has quedado sin flechas.\nGAME OVER');
+      process.exit(0);
+    }
+ 
+    processInput.awaiting = null;
+    return world;
+  }
+ 
+  if (input === 's') {
+    processInput.awaiting = 'shoot';
+    console.log('A que tunel?');
+    return world;
+  }
+ 
+  if (input === 'h') {
+    console.log(HELP);
+    return world;
+  }
+ 
+  console.log("Error de comando");
+  return world;
+}
+processInput.awaiting = 'move';
+ 
+
+//Loop principal.
+ 
+process.stdin.resume();
+process.stdin.setEncoding('utf8');
+ 
+process.stdin.on('data', input => {
+  world = processInput(world, trim(input));
+  console.log('------------------------------');
+});
+ 
+console.log(HELP);
+ 
+process.stdin.emit('data', first(world.player.room));
